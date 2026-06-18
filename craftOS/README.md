@@ -46,5 +46,5 @@ craftOS/
 ---
 
 <div align="center">
-  <b>Made with ⛏️ by<a href="https://github.com/Cchi11">Cchi11 & <a href="https://github.com/josemri">josemri</a></b>
+  <b>Made with ⛏️ by<a href="https://github.com/Cchi11">Cchi11</b> & <b> <a href="https://github.com/josemri">josemri</a> </b>
 </div>
