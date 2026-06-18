@@ -1,4 +1,4 @@
-<img width="192" align="left" src="turtle.png" />
+<img align="left" width="200" src="https://github.com/user-attachments/assets/cf3a2b1f-3cf3-4acc-99da-fdd5a1967cb1" />
 
 **craftOS**
 
@@ -46,5 +46,5 @@ craftOS/
 ---
 
 <div align="center">
-  <b>Made with ⛏️ by <a href="https://github.com/josemri">josemri</a></b>
+  <b>Made with ⛏️ by<a href="https://github.com/Cchi11">Cchi11 & <a href="https://github.com/josemri">josemri</a></b>
 </div>
