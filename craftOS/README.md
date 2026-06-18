@@ -1,4 +1,6 @@
-# craftOS
+<img width="192" align="left" src="turtle.png" />
+
+**craftOS**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Lua](https://img.shields.io/badge/Lua-5.1-blue.svg)](https://www.lua.org)
