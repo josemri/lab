@@ -1,9 +1,12 @@
-# snake
+<img  width="300" align="left" src="https://github.com/user-attachments/assets/75d9dc51-4dff-48b6-bb84-cfbbf9696a78" />
+
+**snake**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![C](https://img.shields.io/badge/C-C99-blue.svg)](https://en.wikipedia.org/wiki/C99)
 
 A classic Snake game that runs entirely in the terminal using ANSI escape codes. Multiple apples can spawn at once, and the snake grows with each one eaten. Collision with walls or yourself ends the game.
+<br clear="both"/>
 
 ## features
 
