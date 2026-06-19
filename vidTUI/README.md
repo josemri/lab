@@ -1,4 +1,4 @@
-<img src="logo.gif" width="280" align="left"/>
+<img  width="300" align="left" src="https://github.com/user-attachments/assets/62728998-aed2-42e9-b123-284407d17187" />
 
 **vidTUI**
 
@@ -6,6 +6,7 @@
 [![Rust](https://img.shields.io/badge/Rust-2021+-orange.svg)](https://www.rust-lang.org)
 
 A terminal user interface for browsing movies from TMDB and playing them via a headless Firefox instance. Posters are rendered as ANSI half-block art, and video playback is streamed to the terminal with a minimal progress bar overlay.
+<br clear="both"/>
 
 ## features
 
