@@ -1,44 +1,29 @@
 --[[
-  Stockpile GUI Client v1.0
+  Stockpile GUI Client v1.1
   Cliente grafico para Stockpile (CC:Tweaked).
- 
-  Botones:
-    DUMP      - Escanea y mueve items del cofre dump al storage
-    RETRIEVE  - Trae el item seleccionado del storage al dump
-    PUSH      - Mueve TODO del storage al dump
-    SEARCH    - Escribe en el campo de busqueda y presiona Enter
-    REFRESH   - Recarga la lista de items
-    USAGE     - Muestra uso del almacenamiento
-    Q         - Salir
- 
-  Navegacion:
-    Click     - Selecciona item / activa campo busqueda / pulsa boton
-    Enter     - En busqueda: ejecuta busqueda. En lista: retrieve
-    Flechas   - Navegar lista
-    Scroll    - Desplazar lista
-    Tab/Escape- Salir del campo de busqueda
+  Genera /stockpile_client.log con informacion de depuracion.
 ]]
+
+-- Logger
+local logFile = "stockpile_client.log"
+local fh = fs.open(logFile, "w")
+local function log(...)
+  local parts = {...}
+  local msg = os.date("%H:%M:%S") .. " " .. table.concat(parts, " ")
+  if fh then fh.writeLine(msg) fh.flush() end
+end
+log("=== Inicio ===")
 
 local GUI = {}
 
--- Colores
 local C = {
-  header  = colors.blue,
-  body    = colors.black,
-  bar     = colors.gray,
-  inputBg = colors.gray,
-  btn     = colors.cyan,
-  btnHov  = colors.lightBlue,
-  selBg   = colors.blue,
-  title   = colors.white,
-  white   = colors.white,
-  yellow  = colors.yellow,
-  green   = colors.green,
-  red     = colors.red,
+  header  = colors.blue,    body    = colors.black,  bar     = colors.gray,
+  inputBg = colors.gray,    btn     = colors.cyan,   btnHov  = colors.lightBlue,
+  selBg   = colors.blue,    title   = colors.white,  white   = colors.white,
+  yellow  = colors.yellow,  green   = colors.green,  red     = colors.red,
   gray    = colors.lightGray,
 }
 
--- Layout dinámico
 local L = {}
 local function layout()
   L.w, L.h = term.getSize()
@@ -48,26 +33,16 @@ local function layout()
   L.statusY = L.h
 end
 
--- Estado
 local state = {
-  server   = nil,
-  items    = {},
-  keys     = {},
-  scroll   = 0,
-  sel      = nil,
-  status   = "Iniciando...",
-  query    = "",
-  input    = false, -- true si el foco esta en el campo de busqueda
+  server = nil, items = {}, keys = {}, scroll = 0, sel = nil,
+  status = "Iniciando...", query = "", input = false,
 }
 
--- Botones (label, x, accion)
 local btnList = {}
-
 local function btn(label, action)
   table.insert(btnList, { label = label, action = action })
 end
 
--- Renderizado
 local function rClear(y)
   term.setCursorPos(1, y)
   term.clearLine()
@@ -76,11 +51,9 @@ end
 local function rHeader()
   term.setBackgroundColor(C.header)
   rClear(1)
-  -- Titulo a la izquierda
   term.setTextColor(C.title)
   term.write(" Stockpile ")
   local titleEnd = term.getCursorPos()
-  -- Botones alineados a la derecha
   local bx = L.w + 1
   for i = #btnList, 1, -1 do
     local b = btnList[i]
@@ -90,7 +63,6 @@ local function rHeader()
     b.y = 1
     b.w = bw
   end
-  -- Relleno entre titulo y botones
   local firstBtn = btnList[1]
   if firstBtn then
     local gap = firstBtn.x - titleEnd
@@ -117,9 +89,7 @@ local function rInput()
   if #txt > iw then txt = string.sub(txt, #txt - iw + 1) end
   term.setTextColor(C.white)
   term.write(txt)
-  if #txt < iw then
-    term.write(string.rep(" ", iw - #txt))
-  end
+  if #txt < iw then term.write(string.rep(" ", iw - #txt)) end
   if state.input then
     term.setCursorPos(3 + #txt, L.inputY)
     term.setCursorBlink(true)
@@ -131,11 +101,25 @@ end
 local function rList()
   local vis = L.listBot - L.listTop + 1
   if vis < 1 then return end
-
   local n = #state.keys
+  if n == 0 then
+    for i = 1, vis do
+      local y = L.listTop + i - 1
+      term.setBackgroundColor(C.body)
+      rClear(y)
+      if i == math.ceil(vis / 2) then
+        term.setTextColor(C.gray)
+        local msg = " Sin items. Usa SCAN para escanear inventarios."
+        if not state.server then msg = " Sin conexion al servidor."
+        elseif state.status:find("Buscando") then msg = " Buscando servidor..."
+        end
+        term.write(msg)
+      end
+    end
+    return
+  end
   if state.scroll > n - vis then state.scroll = math.max(0, n - vis) end
   if state.scroll < 0 then state.scroll = 0 end
-
   for i = 1, vis do
     local y = L.listTop + i - 1
     if y > L.h then break end
@@ -146,12 +130,9 @@ local function rList()
       local amt = state.items[id]
       local name = id:gsub("^minecraft:", "")
       local sel = (state.sel == idx)
-
       term.setBackgroundColor(sel and C.selBg or C.body)
       term.setTextColor(C.white)
       term.write(" " .. name)
-
-      -- Barra visual de cantidad
       local barW = 8
       local fill = math.min(barW, math.ceil(amt / 64 * barW))
       local x0 = L.w - barW - 6
@@ -160,8 +141,6 @@ local function rList()
         term.setTextColor(C.gray)
         term.write("[" .. string.rep("#", fill) .. string.rep(" ", barW - fill) .. "]")
       end
-
-      -- Cantidad a la derecha
       local amtS = tostring(amt)
       term.setTextColor(C.green)
       term.setCursorPos(L.w - #amtS, y)
@@ -197,40 +176,82 @@ end
 local function cmd(cmdStr)
   if not state.server then
     state.status = "Error: Sin servidor"
+    log("cmd: sin servidor, comando ignorado:", cmdStr)
     return nil
   end
   local uuid = math.random(1, 2 ^ 32)
+  log("cmd: enviando >>", cmdStr, "uuid:", uuid)
   rednet.send(state.server, { cmdStr, uuid }, "stockpile")
   local id, msg = rednet.receive("stockpile", 5)
-  if id == state.server and type(msg) == "table" and msg[2] == uuid then
-    return msg[1]
+  log("cmd: respuesta de id:", tostring(id), "msg type:", type(msg))
+  if id == state.server and type(msg) == "table" then
+    log("cmd: respuesta uuid:", tostring(msg[2]), "esperado:", uuid)
+    if msg[2] == uuid then
+      log("cmd: resultado:", textutils.serialize(msg[1]):sub(1, 200))
+      return msg[1]
+    end
+  else
+    log("cmd: timeout o respuesta invalida (id:", tostring(id), "!= state.server:", tostring(state.server), ")")
   end
   return nil
 end
 
 local function findServer()
   state.status = "Buscando servidor..."
+  log("findServer: buscando...")
   local id = rednet.lookup("stockpile")
+  log("findServer: resultado lookup:", tostring(id))
   if id then
     state.server = id
     state.status = "Servidor #" .. id
+    log("findServer: servidor encontrado #" .. id)
     return true
   end
   state.server = nil
-  state.status = "No se encontro servidor"
+  state.status = "No se encontro servidor Stockpile. Verifica rednet."
+  log("findServer: NO encontrado")
   return false
+end
+
+function actSearch(q)
+  if not state.server and not findServer() then return end
+  state.status = "Buscando..."
+  GUI.render()
+  local filter = (q and q ~= "") and q or "."
+  log("actSearch: filter='" .. filter .. "'")
+  local r = cmd('search("' .. filter:gsub('"', '\\"') .. '")')
+  log("actSearch: resultado type=" .. type(r))
+  if type(r) == "table" then
+    state.items = r
+    state.keys = {}
+    for k, _ in pairs(r) do table.insert(state.keys, k) end
+    table.sort(state.keys)
+    state.scroll = 0
+    state.sel = nil
+    state.status = #state.keys .. " items encontrados"
+    log("actSearch: " .. #state.keys .. " items")
+  elseif r then
+    state.status = "Error: " .. tostring(r)
+    log("actSearch: error del servidor: " .. tostring(r))
+  else
+    state.status = "Error: timeout busqueda. Verifica conexion."
+    log("actSearch: timeout")
+  end
 end
 
 -- Acciones
 local function actDump()
   if not state.server and not findServer() then return end
+  log("actDump: iniciando")
   state.status = "Escaneando dump..."
   GUI.render()
   local r = cmd("scan(units.dump)")
+  log("actDump: scan result=" .. tostring(r))
   if r then
     state.status = "Moviendo al storage..."
     GUI.render()
     r = cmd("move_item(units.dump, units.storage)")
+    log("actDump: move result=" .. tostring(r))
   end
   state.status = r and tostring(r) or "Error: timeout dump"
   actSearch(state.query)
@@ -244,18 +265,22 @@ local function actRetrieve()
   end
   local id = state.keys[state.sel]
   if not id then return end
+  log("actRetrieve: " .. id)
   state.status = "Trayendo " .. id:gsub("^minecraft:", "") .. " al dump..."
   GUI.render()
   local r = cmd('move_item(units.storage, units.dump, "' .. id:gsub('"', '\\"') .. '")')
+  log("actRetrieve: resultado=" .. tostring(r))
   state.status = r and tostring(r) or "Error: timeout retrieve"
   actSearch(state.query)
 end
 
 local function actPush()
   if not state.server and not findServer() then return end
+  log("actPush: iniciando")
   state.status = "Push al dump..."
   GUI.render()
   local r = cmd("move_item(units.storage, units.dump)")
+  log("actPush: resultado=" .. tostring(r))
   state.status = r and tostring(r) or "Error: timeout"
   actSearch(state.query)
 end
@@ -266,57 +291,73 @@ end
 
 local function actUsage()
   if not state.server and not findServer() then return end
+  log("actUsage:")
   local r = cmd("usage()")
+  log("actUsage: resultado=" .. tostring(r))
   if type(r) == "table" then
-    state.status = string.format("Uso: %d/%d slots (%d%%)",
-      r.used_slots or 0, r.total_slots or 0,
-      r.total_slots and r.total_slots > 0 and math.floor((r.used_slots or 0) / r.total_slots * 100) or 0)
+    local u = r.used_slots or 0
+    local t = r.total_slots or 0
+    local p = t > 0 and math.floor(u / t * 100) or 0
+    state.status = string.format("Uso: %d/%d slots (%d%%)", u, t, p)
   else
     state.status = r and tostring(r) or "Error: timeout"
   end
 end
 
-function actSearch(q)
+local function actScanAll()
   if not state.server and not findServer() then return end
-  state.status = "Buscando..."
+  log("actScanAll:")
+  state.status = "Actualizando inventarios..."
   GUI.render()
-  local filter = (q and q ~= "") and q or "."
-  local r = cmd('search("' .. filter:gsub('"', '\\"') .. '")')
-  if type(r) == "table" then
-    state.items = r
-    state.keys = {}
-    for k, _ in pairs(r) do table.insert(state.keys, k) end
-    table.sort(state.keys)
-    state.scroll = 0
-    state.sel = nil
-    state.status = #state.keys .. " items encontrados"
-  elseif r then
-    state.status = "Error: " .. tostring(r)
-  else
-    state.status = "Error: timeout busqueda"
+  cmd("unit.get()")
+  local r = cmd("scan(units.undefined)")
+  log("actScanAll: scan undefined=" .. tostring(r))
+  local r2 = cmd("scan(units.storage)")
+  log("actScanAll: scan storage=" .. tostring(r2))
+  local r3 = cmd("scan(units.dump)")
+  log("actScanAll: scan dump=" .. tostring(r3))
+  local ok = true
+  for _, res in ipairs({r, r2, r3}) do
+    if res and tostring(res):find("Error") then ok = false end
   end
+  state.status = ok and "Scan completado" or "Algun scan fallo (revisa log)"
+  actSearch(state.query)
+end
+
+local function actTest()
+  if not state.server and not findServer() then return end
+  log("actTest: === DIAGNOSTICO ===")
+  state.status = "Diagnosticando..."
+  GUI.render()
+  local r1 = cmd("unit.get()")
+  log("actTest: unit.get=" .. textutils.serialize(r1):sub(1, 500))
+  local r2 = cmd("usage()")
+  log("actTest: usage=" .. textutils.serialize(r2):sub(1, 200))
+  local r3 = cmd('search(".")')
+  log("actTest: search count=" .. (type(r3) == "table" and #r3 or tostring(r3)))
+  state.status = "Diagnostico listo. Revisa " .. logFile
 end
 
 -- Input
 local function handleClick(x, y)
-  -- Botones
   for _, b in ipairs(btnList) do
     if b.x and y == b.y and x >= b.x and x < b.x + b.w then
+      log("click: boton '" .. b.label .. "'")
       b.action()
       return true
     end
   end
-  -- Lista
   if y >= L.listTop and y <= L.listBot then
     local idx = state.scroll + (y - L.listTop) + 1
     if idx <= #state.keys then
       state.sel = (state.sel == idx) and nil or idx
+      log("click: seleccion item #" .. idx)
     end
     return true
   end
-  -- Input
   if y == L.inputY then
     state.input = true
+    log("click: activado input")
     return true
   end
   state.input = false
@@ -327,6 +368,7 @@ local function handleKey(code)
   if state.input then
     if code == keys.enter then
       state.input = false
+      log("key: enter, buscando '" .. state.query .. "'")
       actSearch(state.query)
     elseif code == keys.tab or code == keys.escape then
       state.input = false
@@ -382,39 +424,36 @@ local function handleChar(ch)
   end
 end
 
--- Inicializar
 function GUI.start()
   layout()
+  log("layout: " .. L.w .. "x" .. L.h)
 
-  -- Registrar botones (orden inverso para dibujo)
   btn("Q", function() error("quit") end)
+  btn("Test", actTest)
   btn("Usage", actUsage)
+  btn("Scan", actScanAll)
   btn("Push", actPush)
   btn("Refresh", actRefresh)
   btn("Retrieve", actRetrieve)
   btn("Dump", actDump)
 
-  -- Conectar
+  log("buscando servidor...")
   findServer()
+  log("servidor encontrado: " .. tostring(state.server))
   actSearch("")
 
   GUI.render()
 
-  -- Loop principal
   local ok, err = pcall(function()
     while true do
       local ev = { os.pullEventRaw() }
       local t = ev[1]
-
       if t == "mouse_click" then
         handleClick(ev[3], ev[4])
         GUI.render()
       elseif t == "mouse_scroll" then
-        if ev[2] > 0 then
-          state.scroll = state.scroll + 1
-        else
-          state.scroll = math.max(0, state.scroll - 1)
-        end
+        if ev[2] > 0 then state.scroll = state.scroll + 1
+        else state.scroll = math.max(0, state.scroll - 1) end
         GUI.render()
       elseif t == "key" then
         handleKey(ev[2])
@@ -428,14 +467,18 @@ function GUI.start()
     end
   end)
 
+  if fh then fh.close() end
   term.setBackgroundColor(colors.black)
   term.setTextColor(colors.white)
   term.clear()
   term.setCursorPos(1, 1)
   if err and err ~= "quit" then
+    log("Error fatal: " .. tostring(err))
     print("Error: " .. tostring(err))
+    print("Log: " .. logFile)
   else
-    print("Cliente cerrado.")
+    log("=== Salida normal ===")
+    print("Cliente cerrado. Log: " .. logFile)
   end
 end
 
@@ -445,16 +488,22 @@ for _, side in ipairs(peripheral.getNames()) do
   if peripheral.hasType(side, "modem") then
     rednet.open(side)
     modemOpen = true
+    log("modem abierto en: " .. side)
     break
   end
 end
-
 if not modemOpen then
   local ok2, err2 = pcall(function() rednet.open("right") end)
-  if not ok2 then
+  if ok2 then
+    log("modem abierto en: right (fallback)")
+    modemOpen = true
+  else
+    log("ERROR: no se pudo abrir modem en ningun lado")
     term.clear()
     term.setCursorPos(1, 1)
     print("Error: No se encontro modem")
+    print("Conecta un modem y reinicia.")
+    if fh then fh.close() end
     return
   end
 end
