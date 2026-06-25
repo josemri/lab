@@ -180,38 +180,49 @@ local function cmd(cmdStr)
     return nil
   end
   local uuid = math.random(1, 2 ^ 32)
-  log("cmd: enviando >>", cmdStr, "uuid:", uuid)
+  log("cmd: >>", cmdStr, "uuid:", uuid)
   rednet.send(state.server, { cmdStr, uuid }, "stockpile")
-  local timeout = state.server == 0 and 8 or 5
-  local id, msg = rednet.receive("stockpile", timeout)
-  log("cmd: respuesta de id:", tostring(id), "msg type:", type(msg))
-  if id and type(msg) == "table" then
-    if msg[2] == uuid then
-      log("cmd: resultado:", textutils.serialize(msg[1]):sub(1, 200))
-      if state.server == 0 then
-        state.server = id
-        log("cmd: server ID actualizado a:", id)
+  for i = 1, 5 do
+    local id, msg = rednet.receive("stockpile", 2)
+    if id and type(msg) == "table" then
+      log("cmd: recv#" .. i .. " id:", id, "uuid:", tostring(msg[2]))
+      if msg[2] == uuid then
+        log("cmd: resultado:", tostring(msg[1]):sub(1, 200))
+        if state.server == 0 or state.server ~= id then
+          log("cmd: server ID actualizado a:", id)
+          state.server = id
+        end
+        return msg[1]
       end
-      return msg[1]
-    else
-      log("cmd: UUID no coincide (recibido:", tostring(msg[2]), "esperado:", uuid, ")")
     end
-  else
-    log("cmd: timeout o respuesta invalida (id:", tostring(id), ")")
   end
+  log("cmd: FAIL - sin respuesta para:", cmdStr)
   return nil
 end
 
 local function findServer()
   state.status = "Buscando servidor..."
-  log("findServer: buscando...")
+  log("findServer: lookup...")
   local id = rednet.lookup("stockpile")
-  log("findServer: resultado lookup:", tostring(id))
-  if id then
+  if id and id ~= 0 then
     state.server = id
     state.status = "Servidor #" .. id
-    log("findServer: servidor encontrado #" .. id)
+    log("findServer: OK #" .. id)
     return true
+  end
+  -- Broadcast discovery: ping all computers on stockpile protocol
+  log("findServer: broadcast discovery...")
+  state.status = "Descubriendo servidor..."
+  local uuid = math.random(1, 2 ^ 32)
+  rednet.send(0, { "true", uuid }, "stockpile")
+  for i = 1, 5 do
+    local rid, msg = rednet.receive("stockpile", 2)
+    if rid and type(msg) == "table" and msg[2] == uuid then
+      state.server = rid
+      state.status = "Servidor #" .. rid
+      log("findServer: descubierto #" .. rid)
+      return true
+    end
   end
   state.server = nil
   state.status = "No se encontro servidor Stockpile. Verifica rednet."
@@ -522,11 +533,32 @@ local function actSetup()
   actSearch(state.query)
 end
 
+local function actAddChest()
+  if not state.server and not findServer() then return end
+  local name = state.query
+  if not name or name == "" then
+    state.status = "Escribe nombre del cofre (ej: minecraft:chest_59) y pulsa Add"
+    return
+  end
+  log("actAddChest: " .. name)
+  state.status = "Anadiendo " .. name .. "..."
+  GUI.render()
+  local s = cmd("units.storage")
+  if type(s) ~= "table" then s = {} end
+  table.insert(s, name)
+  local invs_str = textutils.serialize(s)
+  cmd('unit.set("storage",' .. invs_str .. ')')
+  cmd('scan(units.storage)')
+  state.status = "Anadido " .. name .. " y escaneado"
+  actSearch(state.query)
+end
+
 function GUI.start()
   layout()
   log("layout: " .. L.w .. "x" .. L.h)
 
   btn("Q", function() error("quit") end)
+  btn("Add", actAddChest)
   btn("Test", actTest)
   btn("Setup", actSetup)
   btn("Usage", actUsage)
