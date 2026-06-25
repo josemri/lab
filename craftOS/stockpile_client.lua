@@ -182,16 +182,22 @@ local function cmd(cmdStr)
   local uuid = math.random(1, 2 ^ 32)
   log("cmd: enviando >>", cmdStr, "uuid:", uuid)
   rednet.send(state.server, { cmdStr, uuid }, "stockpile")
-  local id, msg = rednet.receive("stockpile", 5)
+  local timeout = state.server == 0 and 8 or 5
+  local id, msg = rednet.receive("stockpile", timeout)
   log("cmd: respuesta de id:", tostring(id), "msg type:", type(msg))
-  if id == state.server and type(msg) == "table" then
-    log("cmd: respuesta uuid:", tostring(msg[2]), "esperado:", uuid)
+  if id and type(msg) == "table" then
     if msg[2] == uuid then
       log("cmd: resultado:", textutils.serialize(msg[1]):sub(1, 200))
+      if state.server == 0 then
+        state.server = id
+        log("cmd: server ID actualizado a:", id)
+      end
       return msg[1]
+    else
+      log("cmd: UUID no coincide (recibido:", tostring(msg[2]), "esperado:", uuid, ")")
     end
   else
-    log("cmd: timeout o respuesta invalida (id:", tostring(id), "!= state.server:", tostring(state.server), ")")
+    log("cmd: timeout o respuesta invalida (id:", tostring(id), ")")
   end
   return nil
 end
@@ -240,18 +246,37 @@ function actSearch(q)
 end
 
 -- Acciones
+local function check_unit(name)
+  local r = cmd('type(units.' .. name .. ')')
+  if r == "table" then
+    r = cmd('#units.' .. name)
+    if type(r) == "number" and r > 0 then return true end
+  end
+  return false
+end
+
 local function actDump()
   if not state.server and not findServer() then return end
   log("actDump: iniciando")
+  if not check_unit("dump") then
+    state.status = "Error: units.dump no configurado. Usa: unit.set(\"dump\", {\"chest\"})"
+    return
+  end
+  if not check_unit("storage") then
+    state.status = "Error: units.storage no configurado. Usa SCAN primero"
+    return
+  end
   state.status = "Escaneando dump..."
   GUI.render()
   local r = cmd("scan(units.dump)")
   log("actDump: scan result=" .. tostring(r))
-  if r then
+  if r and not tostring(r):find("Error") then
     state.status = "Moviendo al storage..."
     GUI.render()
     r = cmd("move_item(units.dump, units.storage)")
     log("actDump: move result=" .. tostring(r))
+  else
+    state.status = "Error scan dump: " .. tostring(r or "timeout")
   end
   state.status = r and tostring(r) or "Error: timeout dump"
   actSearch(state.query)
@@ -265,6 +290,14 @@ local function actRetrieve()
   end
   local id = state.keys[state.sel]
   if not id then return end
+  if not check_unit("storage") then
+    state.status = "Error: units.storage no configurado"
+    return
+  end
+  if not check_unit("dump") then
+    state.status = "Error: units.dump no configurado"
+    return
+  end
   log("actRetrieve: " .. id)
   state.status = "Trayendo " .. id:gsub("^minecraft:", "") .. " al dump..."
   GUI.render()
@@ -277,6 +310,14 @@ end
 local function actPush()
   if not state.server and not findServer() then return end
   log("actPush: iniciando")
+  if not check_unit("storage") then
+    state.status = "Error: units.storage no configurado"
+    return
+  end
+  if not check_unit("dump") then
+    state.status = "Error: units.dump no configurado"
+    return
+  end
   state.status = "Push al dump..."
   GUI.render()
   local r = cmd("move_item(units.storage, units.dump)")
@@ -310,15 +351,43 @@ local function actScanAll()
   state.status = "Actualizando inventarios..."
   GUI.render()
   cmd("unit.get()")
-  local r = cmd("scan(units.undefined)")
-  log("actScanAll: scan undefined=" .. tostring(r))
-  local r2 = cmd("scan(units.storage)")
-  log("actScanAll: scan storage=" .. tostring(r2))
-  local r3 = cmd("scan(units.dump)")
-  log("actScanAll: scan dump=" .. tostring(r3))
+  local units_reply = cmd("units")
+  log("actScanAll: units=" .. textutils.serialize(units_reply):sub(1, 300))
+  local results = {}
+  local function try_scan(unit_name)
+    local r = cmd('scan(units.' .. unit_name .. ')')
+    table.insert(results, {unit = unit_name, result = r})
+    log("actScanAll: scan " .. unit_name .. "=" .. tostring(r))
+  end
+  -- Si storage no existe o esta vacio, auto-crearlo desde undefined
+  local has_storage = false
+  if type(units_reply) == "table" then
+    local storage = units_reply.storage
+    if type(storage) == "table" and #storage > 0 then
+      has_storage = true
+    else
+      local undefined = units_reply.undefined
+      if type(undefined) == "table" and #undefined > 0 then
+        local invs = {}
+        for _, v in ipairs(undefined) do table.insert(invs, v) end
+        local invs_str = textutils.serialize(invs)
+        cmd('unit.set("storage",' .. invs_str .. ')')
+        log("actScanAll: storage auto-creado desde undefined")
+        has_storage = true
+      end
+    end
+    -- Verificar dump
+    local dump = units_reply.dump
+    if type(dump) ~= "table" or #dump == 0 then
+      state.status = "Configura 'dump' con: unit.set(\"dump\", {\"minecraft:chest_X\"})"
+    end
+  end
+  if has_storage then try_scan("storage") end
+  try_scan("dump")
+  try_scan("undefined")
   local ok = true
-  for _, res in ipairs({r, r2, r3}) do
-    if res and tostring(res):find("Error") then ok = false end
+  for _, res in ipairs(results) do
+    if res.result and tostring(res.result):find("Error") then ok = false end
   end
   state.status = ok and "Scan completado" or "Algun scan fallo (revisa log)"
   actSearch(state.query)
@@ -424,12 +493,42 @@ local function handleChar(ch)
   end
 end
 
+local function actSetup()
+  if not state.server and not findServer() then return end
+  log("actSetup: === SETUP ===")
+  state.status = "Configurando..."
+  GUI.render()
+  cmd("unit.get()")
+  local undefined = cmd("units.undefined")
+  log("actSetup: undefined=" .. textutils.serialize(undefined):sub(1, 300))
+  if type(undefined) == "table" and #undefined > 0 then
+    local invs = {}
+    for _, v in ipairs(undefined) do table.insert(invs, v) end
+    local invs_str = textutils.serialize(invs)
+    cmd('unit.set("storage",' .. invs_str .. ')')
+    cmd('scan(units.storage)')
+    state.status = "Storage creado con " .. #invs .. " inventarios. Configura dump manualmente."
+  else
+    local s = cmd("units.storage")
+    if type(s) == "table" and #s > 0 then
+      cmd('scan(units.storage)')
+      state.status = #s .. " inventarios en storage escaneados."
+      local d = cmd("units.dump")
+      if type(d) ~= "table" or #d == 0 then
+        state.status = state.status .. " Falta configurar units.dump"
+      end
+    end
+  end
+  actSearch(state.query)
+end
+
 function GUI.start()
   layout()
   log("layout: " .. L.w .. "x" .. L.h)
 
   btn("Q", function() error("quit") end)
   btn("Test", actTest)
+  btn("Setup", actSetup)
   btn("Usage", actUsage)
   btn("Scan", actScanAll)
   btn("Push", actPush)
