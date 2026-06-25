@@ -214,7 +214,7 @@ local function findServer()
   log("findServer: broadcast discovery...")
   state.status = "Descubriendo servidor..."
   local uuid = math.random(1, 2 ^ 32)
-  rednet.send(0, { "true", uuid }, "stockpile")
+  rednet.send(0, { "usage()", uuid }, "stockpile")
   for i = 1, 5 do
     local rid, msg = rednet.receive("stockpile", 2)
     if rid and type(msg) == "table" and msg[2] == uuid then
@@ -257,38 +257,15 @@ function actSearch(q)
 end
 
 -- Acciones
-local function check_unit(name)
-  local r = cmd('type(units.' .. name .. ')')
-  if r == "table" then
-    r = cmd('#units.' .. name)
-    if type(r) == "number" and r > 0 then return true end
-  end
-  return false
-end
-
 local function actDump()
   if not state.server and not findServer() then return end
   log("actDump: iniciando")
-  if not check_unit("dump") then
-    state.status = "Error: units.dump no configurado. Usa: unit.set(\"dump\", {\"chest\"})"
-    return
-  end
-  if not check_unit("storage") then
-    state.status = "Error: units.storage no configurado. Usa SCAN primero"
-    return
-  end
   state.status = "Escaneando dump..."
   GUI.render()
   local r = cmd("scan(units.dump)")
-  log("actDump: scan result=" .. tostring(r))
-  if r and not tostring(r):find("Error") then
-    state.status = "Moviendo al storage..."
-    GUI.render()
-    r = cmd("move_item(units.dump, units.storage)")
-    log("actDump: move result=" .. tostring(r))
-  else
-    state.status = "Error scan dump: " .. tostring(r or "timeout")
-  end
+  log("actDump: scan dump=" .. tostring(r))
+  r = cmd("move_item(units.dump, units.storage)")
+  log("actDump: move=" .. tostring(r))
   state.status = r and tostring(r) or "Error: timeout dump"
   actSearch(state.query)
 end
@@ -301,14 +278,6 @@ local function actRetrieve()
   end
   local id = state.keys[state.sel]
   if not id then return end
-  if not check_unit("storage") then
-    state.status = "Error: units.storage no configurado"
-    return
-  end
-  if not check_unit("dump") then
-    state.status = "Error: units.dump no configurado"
-    return
-  end
   log("actRetrieve: " .. id)
   state.status = "Trayendo " .. id:gsub("^minecraft:", "") .. " al dump..."
   GUI.render()
@@ -321,14 +290,6 @@ end
 local function actPush()
   if not state.server and not findServer() then return end
   log("actPush: iniciando")
-  if not check_unit("storage") then
-    state.status = "Error: units.storage no configurado"
-    return
-  end
-  if not check_unit("dump") then
-    state.status = "Error: units.dump no configurado"
-    return
-  end
   state.status = "Push al dump..."
   GUI.render()
   local r = cmd("move_item(units.storage, units.dump)")
@@ -362,45 +323,21 @@ local function actScanAll()
   state.status = "Actualizando inventarios..."
   GUI.render()
   cmd("unit.get()")
-  local units_reply = cmd("units")
+  local units_reply = cmd("unit.get()")
   log("actScanAll: units=" .. textutils.serialize(units_reply):sub(1, 300))
-  local results = {}
-  local function try_scan(unit_name)
-    local r = cmd('scan(units.' .. unit_name .. ')')
-    table.insert(results, {unit = unit_name, result = r})
-    log("actScanAll: scan " .. unit_name .. "=" .. tostring(r))
+  -- Auto-crear storage desde undefined si existe
+  if type(units_reply) == "table" and type(units_reply.undefined) == "table" and #units_reply.undefined > 0 then
+    local invs_str = textutils.serialize(units_reply.undefined)
+    cmd('unit.set("storage",' .. invs_str .. ')')
+    log("actScanAll: storage auto-creado desde undefined")
   end
-  -- Si storage no existe o esta vacio, auto-crearlo desde undefined
-  local has_storage = false
-  if type(units_reply) == "table" then
-    local storage = units_reply.storage
-    if type(storage) == "table" and #storage > 0 then
-      has_storage = true
-    else
-      local undefined = units_reply.undefined
-      if type(undefined) == "table" and #undefined > 0 then
-        local invs = {}
-        for _, v in ipairs(undefined) do table.insert(invs, v) end
-        local invs_str = textutils.serialize(invs)
-        cmd('unit.set("storage",' .. invs_str .. ')')
-        log("actScanAll: storage auto-creado desde undefined")
-        has_storage = true
-      end
-    end
-    -- Verificar dump
-    local dump = units_reply.dump
-    if type(dump) ~= "table" or #dump == 0 then
-      state.status = "Configura 'dump' con: unit.set(\"dump\", {\"minecraft:chest_X\"})"
-    end
+  local all_scans_ok = true
+  for _, name in ipairs({"storage", "dump", "undefined"}) do
+    local r = cmd('scan(units.' .. name .. ')')
+    log("actScanAll: scan " .. name .. "=" .. tostring(r))
+    if not r or tostring(r):find("Error") then all_scans_ok = false end
   end
-  if has_storage then try_scan("storage") end
-  try_scan("dump")
-  try_scan("undefined")
-  local ok = true
-  for _, res in ipairs(results) do
-    if res.result and tostring(res.result):find("Error") then ok = false end
-  end
-  state.status = ok and "Scan completado" or "Algun scan fallo (revisa log)"
+  state.status = all_scans_ok and "Scan completado" or "Algun scan fallo (revisa log)"
   actSearch(state.query)
 end
 
@@ -509,25 +446,31 @@ local function actSetup()
   log("actSetup: === SETUP ===")
   state.status = "Configurando..."
   GUI.render()
-  cmd("unit.get()")
-  local undefined = cmd("units.undefined")
-  log("actSetup: undefined=" .. textutils.serialize(undefined):sub(1, 300))
-  if type(undefined) == "table" and #undefined > 0 then
-    local invs = {}
-    for _, v in ipairs(undefined) do table.insert(invs, v) end
-    local invs_str = textutils.serialize(invs)
+  local units_tbl = cmd("unit.get()")
+  log("actSetup: unit.get=" .. textutils.serialize(units_tbl):sub(1, 300))
+  if type(units_tbl) ~= "table" then
+    state.status = "Error: no se pudo obtener units"
+    actSearch(state.query)
+    return
+  end
+  -- Auto-crear storage desde undefined si hay
+  local undef = units_tbl.undefined
+  if type(undef) == "table" and #undef > 0 then
+    local invs_str = textutils.serialize(undef)
     cmd('unit.set("storage",' .. invs_str .. ')')
     cmd('scan(units.storage)')
-    state.status = "Storage creado con " .. #invs .. " inventarios. Configura dump manualmente."
+    state.status = "Storage creado con " .. #undef .. " inventarios. Configura dump manualmente."
   else
-    local s = cmd("units.storage")
-    if type(s) == "table" and #s > 0 then
+    local stor = units_tbl.storage
+    if type(stor) == "table" and #stor > 0 then
       cmd('scan(units.storage)')
-      state.status = #s .. " inventarios en storage escaneados."
-      local d = cmd("units.dump")
-      if type(d) ~= "table" or #d == 0 then
+      state.status = #stor .. " inventarios en storage escaneados."
+      local dump = units_tbl.dump
+      if type(dump) ~= "table" or #dump == 0 then
         state.status = state.status .. " Falta configurar units.dump"
       end
+    else
+      state.status = "No hay inventarios detectados. Anadelos manualmente con Add."
     end
   end
   actSearch(state.query)
@@ -543,12 +486,8 @@ local function actAddChest()
   log("actAddChest: " .. name)
   state.status = "Anadiendo " .. name .. "..."
   GUI.render()
-  local s = cmd("units.storage")
-  if type(s) ~= "table" then s = {} end
-  table.insert(s, name)
-  local invs_str = textutils.serialize(s)
-  cmd('unit.set("storage",' .. invs_str .. ')')
-  cmd('scan(units.storage)')
+  cmd('unit.add("storage",{"' .. name:gsub('"', '\\"') .. '"})')
+  cmd("scan(units.storage)")
   state.status = "Anadido " .. name .. " y escaneado"
   actSearch(state.query)
 end
